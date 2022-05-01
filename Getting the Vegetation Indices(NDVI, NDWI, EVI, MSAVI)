@@ -1,0 +1,112 @@
+///////////////////////////////////////
+/*--------SENTINEL2 LEVEL2A----------*/
+///////////////////////////////////////
+
+/*----------Study Area------------*/
+var Lagos = Lagos.geometry();
+Map.centerObject(Lagos,10);
+Map.addLayer(Lagos,{},"Lagos")
+
+/*-------------Raw sentinel_2A---------*/
+var Raw_sentinel_2A=ee.ImageCollection("COPERNICUS/S2_SR")
+.filterBounds(Lagos)
+.first()
+.clip(Lagos);
+var visparg= { min:0, max:2500};//visualization parameter
+print(Raw_sentinel_2A,"Raw_sentinel_2A")
+Map.addLayer(Raw_sentinel_2A.select("B1","B2","B3","B4","B5","B6","B7","B8","B9","B11","B12","AOT"),visparg,'Raw_sentinel_2A',false)
+
+/*-------Filtering data-------*/
+var sentinel_2A=ee.ImageCollection("COPERNICUS/S2_SR")
+.filterBounds(Lagos)
+.filterDate('2018-01-01','2018-12-31')
+.filterMetadata("CLOUDY_PIXEL_PERCENTAGE","less_than",10)
+.sort('CLOUDY_PIXEL_PERCENTAGE')
+.median()
+.clip(Lagos)
+print(sentinel_2A,"FILTERED IMAGE")
+var visualization ={gain:'0.1 ,0.1 ,0.1',scale:7}
+Map.addLayer(sentinel_2A.select("B4","B3","B2"),visualization,'True_colour_sentinel_2A')
+
+
+
+//---------CALCULATION OF NDVI VALUES------------/
+//NDVI:Normalized Difference Vegetation Index 
+var RED_BAND=sentinel_2A.select("B4")
+var NIR_BAND=sentinel_2A.select("B8")
+var NDVI = NIR_BAND.subtract(RED_BAND).divide(NIR_BAND.add(RED_BAND)).rename('NDVI');
+print(NDVI, 'NDVI')
+Map.addLayer(NDVI,{palette: ['blue', 'white', 'green'] },"NDVI")
+
+//----------CALCULATION OF NDWI---------------------/
+//NDWI:Normalized Difference Water Index 
+var green_Band=sentinel_2A.select("B3")
+var nir_Band=sentinel_2A.select("B5")
+var NDWI = green_Band.subtract(nir_Band).divide(nir_Band.add(green_Band));
+print(NDWI, 'NDWI')
+var ndwi_vispar={min:-1,max:0,palette: ['blue', 'white', 'green']}
+Map.addLayer(NDWI,ndwi_vispar,"NDWI",false)
+
+// compute MSAVI2 using expression
+var msavi2 = sentinel_2A.expression(
+  '(2 * NIR + 1 - sqrt(pow((2 * NIR + 1), 2) - 8 * (NIR - RED)) ) / 2', 
+  {
+    'NIR': sentinel_2A.select('B8'), 
+    'RED': sentinel_2A.select('B4')
+  }
+);
+
+Map.addLayer(msavi2, {min: -0.1, max: 0.5}, 'msavi2 (expression)')
+
+// compute MSAVI2 using fluent API
+msavi2 = sentinel_2A.select('B8').multiply(2).add(1)
+  .subtract(sentinel_2A.select('B8').multiply(2).add(1).pow(2)
+    .subtract(sentinel_2A.select('B8').subtract(sentinel_2A.select('B4')).multiply(8)).sqrt()
+  ).divide(2)
+
+Map.addLayer(msavi2, {min: -0.1, max: 0.5}, 'msavi2 (fluent)');
+
+
+///////EVI///////
+var resolution = 30;
+/**
+* Function to mask clouds using the Sentinel-2 QA band
+* @param {ee.Image} image Sentinel-2 image
+* @return {ee.Image} cloud masked Sentinel-2 image
+*/
+function maskS2clouds(image) {
+  var qa = image.select('QA60');
+
+          
+  // Bits 10 and 11 are clouds and cirrus, respectively.
+  var cloudBitMask = 1 << 10;
+  var cirrusBitMask = 1 << 11;
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+      .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+
+  return image.updateMask(mask).divide(10000);
+}
+
+// Add EVI using an expression.
+var addEVI=function(image){
+var EVI = image.expression(
+      '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', {
+      'NIR' : image.select('B8').divide(10000),
+      'RED' : image.select('B4').divide(10000),
+      'BLUE': image.select('B2').divide(10000)}).rename('EVI');
+      return image.addBands(EVI);
+};
+
+var Nov19= ee.ImageCollection('COPERNICUS/S2_SR')
+            .filterBounds(Lagos)
+                  .filterDate('2020-12-01', '2020-12-31')
+                  // Pre-filter to get less cloudy granules.
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',10))
+                  .map(addEVI)
+                  .map(maskS2clouds);
+                  
+                  
+print(Nov19);
+
+Map.addLayer(Nov19.select('EVI').median().clip(Lagos), {min:-1,max:1,palette:['red', 'green']}, 'EVI Nov19');
