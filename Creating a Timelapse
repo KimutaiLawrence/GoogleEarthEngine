@@ -1,0 +1,74 @@
+
+var l8=ee.ImageCollection("LANDSAT/LC8_L1T_TOA")
+// define the period
+var years = ee.List.sequence(2018,2022,1)
+print(years)
+
+var l8names = ee.List(["B1","B2","B3","B4","B5","B6","B7","B8","B9","B10","B11","BQA"])
+
+// bands
+var l8Bands = ee.List(["b1","blue","green","red","nir","swir1","swir2","cir","tir1","tir2","pan","BQA"])
+
+// Filter based on location
+var l8images  = l8.filterBounds(Lagos)
+
+// set cloud threshold
+var cloud_thresh = 40;
+
+// Functions
+var cloudfunction = function(image){
+  //use add the cloud likelihood band to the image
+  var CloudScore = ee.Algorithms.Landsat.simpleCloudScore(image);
+  //isolate the cloud likelihood band
+  var quality = CloudScore.select('cloud');
+  //get pixels above the threshold
+  var cloud01 = quality.gt(cloud_thresh);
+  //create a mask from high likelihood pixels
+  var cloudmask = image.mask().and(cloud01.not());
+  //mask those pixels from the image
+  return image.updateMask(cloudmask);
+};
+
+// mask all clouds in the image collection
+l8images = l8images.map(cloudfunction);
+
+print(l8images);
+
+// Change the bandnames
+l8images = l8images.select(l8names,l8Bands);
+
+print(l8images);
+
+// Combine all data in single collection
+var myCollection = ee.ImageCollection((l8images));
+
+// Select the red, green an blue bands
+var myCollection = myCollection.select(['red','green','blue'])
+
+
+// calculate an image for every year
+var yearlymap = ee.ImageCollection(years.map(function (y) {
+      var image = myCollection.filter(ee.Filter.calendarRange(y, y, 'year'))
+                              .median();
+      return image.set('year', 2018)
+                  .set('date', ee.Date.fromYMD(y,1,1))
+                  .set('system:time_start',ee.Date.fromYMD(y,1,1));
+}));
+
+print(yearlymap)
+
+// we need an 8-bit format
+var coll4Video = yearlymap
+  .map(function(image) {
+    return image.multiply(512).uint8();   // need to make it 8-bit
+  });
+  
+// export the video to the drive
+Export.video.toDrive({
+    collection: coll4Video,
+    description: "Lagosvid" , 
+    scale: 30,
+    framesPerSecond: 2,
+    region: Lagos
+});
+
