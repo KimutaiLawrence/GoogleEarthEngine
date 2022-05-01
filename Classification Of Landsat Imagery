@@ -1,0 +1,73 @@
+// Define a region of interest as a point.
+/*----------Study Area------------*/
+var Lagos = Lagos.geometry();
+Map.addLayer(Lagos,{},"Lagos")
+
+
+
+
+
+// Load the Landsat 8 scaled radiance image collection.
+var landsatCollection = ee.ImageCollection('LANDSAT/LC08/C01/T1')
+    .filterDate('2017-01-01', '2017-12-31');
+
+// Make a cloud-free composite.
+var composite = ee.Algorithms.Landsat.simpleComposite({
+  collection: landsatCollection,
+  asFloat: true
+});
+
+// Visualize the Composite
+Map.addLayer(composite, {bands: ['B4', 'B3', 'B2'], max: 0.5, gamma: 2}, 'L8 Image', false);
+
+
+// Merge points together
+var newfc = water.merge(urban).merge(forest);
+print(newfc, 'newfc')
+
+
+// Select the bands for training
+var bands = ['B2', 'B3', 'B4', 'B5', 'B6', 'B7'];
+
+// Sample the input imagery to get a FeatureCollection of training data.
+var training = composite.select(bands).sampleRegions({
+  collection: newfc,
+  properties: ['landcover'],
+  scale: 30
+});
+
+var Bands_selection=["B4","B3","B2"];
+
+///SPLITS:Training(75%) & Testing samples(25%).
+var Total_samples=training.randomColumn('random')
+var training_samples=Total_samples.filter(ee.Filter.lessThan('random',0.75))
+print(training_samples,"Training Samples")
+var validation_samples=Total_samples.filter(ee.Filter.greaterThanOrEquals('random',0.75))
+print(validation_samples,"Validation_Samples")
+
+
+// Make a Random Forest classifier and train it.
+var classifier=ee.Classifier.smileRandomForest(10).train({
+features:training_samples,
+classProperty:'landcover',
+inputProperties:Bands_selection
+})
+
+
+// Classify the input imagery.
+var classified = composite.select(bands).classify(classifier);
+
+// Define a palette for the Land Use classification.
+var palette = [
+  'grey', // urban (0)  // grey
+  'blue', // water (1)  // blue
+  'green' //  forest (2) // green
+];
+
+// Display the classification result and the input image.
+Map.centerObject(Lagos,10);
+Map.addLayer(classified.clip(Lagos), {min: 0, max: 2, palette: palette}, 'Land Use Classification');
+
+// Get a confusion matrix representing resubstitution accuracy.
+print('RF error matrix: ', classifier.confusionMatrix());
+print('RF accuracy: ', classifier.confusionMatrix().accuracy());
