@@ -1,0 +1,8 @@
+/*----------Study Area------------*/
+var Lagos = Lagos.geometry();
+Map.centerObject(Lagos,10);
+Map.addLayer(Lagos,{},"Lagos")
+
+Map.addLayer(aoi,{},"Benin region")
+
+
